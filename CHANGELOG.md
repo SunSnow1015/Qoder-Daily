@@ -1,5 +1,108 @@
 # 更新日志
 
+## v1.0.24（2026-11-17）
+
+- `qoder_login.py` 不再禁用环境代理，默认读取系统 / `HTTP_PROXY` / `HTTPS_PROXY` 配置。
+- 新增 `QODER_PROXY` 显式代理覆盖，解决直连 `qoder.com` / `openapi.qoder.sh` 被重置时无法完成设备授权轮询的问题。
+- `ConnectionResetError(10054)` 等传输错误现在附带代理设置提示；连续 3 次网络失败立即退出，不再空等到 300 秒超时。
+- 新增登录代理、环境代理和网络重置提示回归测试；签到、Token 轮换与 Actions 缓存逻辑未变更。
+
+## v1.0.23（2026-11-15）
+
+- Actions 强制要求 `QODER_CACHE_KEY`：未配置时 workflow 在运行前直接失败，不再跳过状态持久化继续运行账号，避免干净 runner 每次生成新设备码并触发风控；
+- README 明确设备码漂移后的恢复步骤：配置稳定 `QODER_CACHE_KEY`，必要时用 `qoder_login.py` 重新登录并更新 `QODER_TOKENS`；
+- 不修改 Python 签到、登录和 token 轮换逻辑。
+
+## v1.0.22（2026-11-12）
+
+- 每日签到 claim 前后增加账户总剩余额度回读；只有确认额度增加才报告成功。
+- 回读不可用、额度未增加或并发消耗抵消本次奖励时，明确报告“已受理待确认”，不再只凭 claim 回执声称到账。
+- Pro 升级包原有额度前后对比逻辑保留。
+- 新增额度桶汇总、正增长、零增长和回读不可用回归；全套 `58` 项测试通过。
+
+## v1.0.21（2026-11-11）
+
+- 账号 2 工作流固定专用主机名 `qoder-account2-actions`，避免 GitHub hosted runner 每次使用不同主机名。
+- `machine_hostname()` 新增 `QODER_MACHINE_HOSTNAME` 专用覆盖，优先级高于 `COMPUTERNAME` / `HOSTNAME`，防止 Bash 重设环境变量后丢失隔离值。
+- README 修正设备身份边界：独立 cache 稳定的是 `qoder_machine_id` 与轮换 Token；官方 UMID 组件生成的 `machineToken` / `machineCode` / `machineType` 仍可能按上游策略变化。
+- 新增主机名覆盖与回落回归，全套 `55` 项测试通过。
+
+## v1.0.20（2026-11-11）
+
+- 合并外部 PR #6 的净增量：国际版每日 claim 改用完整设备风控头与 JSON `{}`，修复最小鉴权头 + 空 body 返回 `409 INTERNAL_ERROR` 的问题。
+- 中国版 claim 继续使用最小鉴权头和空 body，避免重新触发 `503 RISK_DEPENDENCY_UNAVAILABLE`。
+- 新增账号 2 独立 Actions 工作流：独立 `QODER_GLOBAL_TOKENS_2`、独立缓存前缀、独立 `qoder_tokens.json` / `qoder_machine_id`，并固定账号 2 专用主机名，不覆盖账号 1 的设备状态。
+- 保留 v1.0.19 的 10:00（UTC+8）前零 HTTP 行为；补充分地区 claim 请求形态与主机名覆盖回归，全套 `55` 项测试通过。
+
+## v1.0.19（2026-11-10）
+
+- 收紧 v1.0.18 的 10:00 实例边界：09:59:59 前直接停止，不再请求 campaigns，也不再对上一实例发送幂等 claim。
+- 10:00 后继续走现有活动列表、每日分类、幂等 claim 和 `replayed` 判定。
+- 默认 GitHub Actions 时点仍是 10:05；早于窗口的手动或旧配置运行会明确提示重跑。
+- 回归改为验证“10:00 前零 HTTP”；全天边界和原有 claim 测试保留，全套 `53` 项测试通过。
+
+## v1.0.18（2026-11-10）
+
+- 对齐 Qoder 每日奖励实例的真实窗口：10:00（UTC+8）切换，持续到次日 09:59。
+- 09:59 前幂等 claim 返回 `replayed=true` 时，不再误报“今日已领取”；明确提示上游仍在上一实例，需在 10:05 后重跑。
+- 10:00 后的 `replayed=true` 仍按今日已领取处理；`replayed=false + CLAIMED` 继续按本次真实领取成功处理。
+- 新增 00:00 / 09:59 / 10:00 / 10:05 / 23:59 边界和旧实例回放回归；全套 `53` 项测试通过。
+
+## v1.0.17（2026-11-07）
+
+- `drt-` 设备令牌续期增加媒体类型兼容：JSON 遇到 HTTP 415，或 HTTP 400 包装 `code=415 / Unsupported Media Type` 时，只改用 `application/x-www-form-urlencoded` 重试一次。
+- 普通 HTTP 400、401/403、第二次仍失败和其他 4xx/5xx 不切换编码，也不覆盖本地 token。
+- `jrt-` 与 PAT exchange 不启用未经验证的 form 形态，保持原协议。
+- token 状态改为临时文件写入、`fsync`、`os.replace` 原子替换；写盘失败不再被吞掉或误报“续期成功”。
+- 续期成功但状态持久化失败时回滚内存中的 access / refresh，并明确报告失败。
+- 新增直接 415、包装 400 code=415、普通 400、jrt 不重试、持久化失败与原子替换回归；全套 `51` 项测试通过。
+
+## v1.0.16（2026-11-07）
+
+- 修复批次级 `campaignId` 跨日复用时，旧 `CLAIMED` 行被误判为“今日已领取”而漏领的问题。
+- 每日活动同时存在 `CLAIMABLE` 与 `CLAIMED` 行时优先领取 `CLAIMABLE`；只有候选均已领取时才对活动窗口内的代表性 `CLAIMED` 行重发一次幂等 claim。
+- `replayed=true` 继续按今日已领取处理；`replayed=false` + 新 `CLAIMED` 按本次真实领取成功处理。
+- claim 请求对齐上游最小鉴权头与空 body，移除完整设备头和 JSON `{}`，避免 `RISK_DEPENDENCY_UNAVAILABLE` 形态拦截。
+- 活动窗口外或非每日行的 `CLAIMED` 不参与复核；失败、409、BLOCKED 与未知响应不冒充已领。
+- 新增 claimed 候选、过期行、回放、真领和最小请求形态回归；全套 `45` 项测试通过。
+
+## v1.0.15（2026-11-07）
+
+- 每日签到改为语义分类：必须同时满足 `actionType=CLAIM_BENEFIT`、`benefit.kind=CREDITS` 和非空 `campaignId`。
+- 按中英文标题、POPUP / USAGE placement、`modelScope.modelSeries.key` 识别每日活动；限定模型、Sonus、SOTA 不再作为每日签到。
+- 无标题旧活动仅接受“100 Credits、30 天有效、单日窗口”组合；活动已结束或尚未开始时不再尝试领取。
+- 活动清单增加整表预检：任一行不是对象、缺少 `campaignId` 或 ID 重复时整表拒绝领取。
+- 自动 Pro 探测同步排除限定模型、Sonus、SOTA，避免把非签到高额权益当成 Pro 升级包。
+- 新增每日分类矩阵、清单预检和活动时间回归测试；全套 `40` 项测试通过。
+
+## v1.0.14（2026-11-06）
+
+- 修复 Qoder 国际版活动发现顺序：先无风控头读取活动列表顶层 `uid`，再用该 UID 生成 UMID 身份并二次拉取，避免未配置 UID 时用空账号身份请求，出现“鉴权成功但活动列表为空”的假未下发。
+- 国际版首次请求鉴权失效并完成 Token 续期后，会重新执行完整的两段 UID/风控流程。
+- 国际版没有 UID 时不再调用 UMID 生成无绑定账号的设备身份，结果明确保留为中性未领取，不虚报签到成功。
+- 国际版 CLI / 自动提取的 UMID 使用新加坡环境参数 `4`，客户端组件继续使用 `3`；客户端版本回退值同步到官方 `1.1.83`。
+- 活动列表继续保持官方客户端的无 `forceRefresh` 请求形态，避免重新引入 v1.0.7 已修复的活动行被过滤问题。
+- 新增 UID 发现、配置 UID 与实时 UID 对拍、风控二次拉取、续期后重放、CLI 环境参数和空 UID 防护回归测试。
+
+## v1.0.13（2026-11-04）
+
+- 文档发行版：同步首屏使用边界、反收费/反搬运声明、`NOTICE.md`、微信/支付宝赞赏码防诈骗提醒与六语导航。
+- Release 完整包现在包含最新 README、NOTICE、docs 与图片资产；签到/领取主逻辑未变更，脚本版本仍为 `v1.0.12`。
+- 验证：Markdown 渲染、相对链接、二维码资产与发布包清单检查通过；本版未使用真实账号执行签到。
+
+## v1.0.12（2026-10-31）
+
+- 对齐 3.3.0-beta.6 的 Qoder 每日积分窗口行为：活动窗口 10:00 开启后，若上游暂未下发，重试窗口从 30 分钟放宽到 1 小时。
+- 默认重试间隔从 90 秒改为 10 分钟，最多 6 次，避免高频重试触发风控；`QODER_WINDOW_RETRY_GAP` / `QODER_WINDOW_RETRY_MAX` 仍可覆盖。
+
+## v1.0.11（2026-10-29）
+
+- 修正额度类 403 与凭证失效混判：HTTP 403 响应含 `pricingUrl` 或业务码 `112` 时按「额度耗尽」处理，账号冷却 30 分钟，不再触发 token 续期，也不按登录失败上报。
+- 业务码 `110` / `Billing daily count exceeded` 按「每日计费次数上限」处理，冷却到本地零点，封顶 6 小时（最低 60 秒）。
+- `auth_dead_response` 只在非额度类 401/403 或业务码 `105` / `10019901001` 时判为会话失效；成功活动列表与 claim 路径保持不变。
+- 新增 5 项离线回归测试，覆盖 `112`、`pricingUrl`、`110` 冷却边界、普通 401/403 与额度 403 不触发续期；测试总数 33 项。
+- 实证来源：[shuishuipingan/qoder2api-hub@1033662b](https://github.com/shuishuipingan/qoder2api-hub/commit/1033662b)，对应上游 `v1.7.9`。
+
 ## v1.0.10（2026-10-23）
 
 - 跟进 Qoder CN 活动列表按请求头分桶的下发异常：完整设备头返回 HTTP 200 + `showCampaign:false` / `campaigns:[]` 时，改用 `Authorization`、`Cosy-ClientType`、`User-Agent`、`Content-Type` 四件套复取一次。
